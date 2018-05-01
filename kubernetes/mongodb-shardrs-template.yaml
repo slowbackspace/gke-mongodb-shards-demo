@@ -1,0 +1,158 @@
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: mongo-secrets
+# type: Opaque
+# data:
+#   internal-auth-mongodb-keyfile: |-
+#     KBEl4VUfvQnGs7Y7wyUs76kp9XLAIopclu/FXbDubYa7tN0meEHyjikX7iDze4RA
+#     xpKBHnyE9V6Vsbq+me15QJW2eStxkn0KjlcJf+7dZN+ebsAxPuJ9Au9a7qTuHBFn
+#     vKa7TfFZ0tOJU8tyWhGVz3oOayh63inRv+cNb0z0CQHUvdy71L9A1dvNWXjb4E7E
+#     54S8beKM1P/rMSrIbVro50fk5vZ2dhtvOjDigli9Hc/bJKf4WM2YqOjTpETMuE/B
+#     fLIfldw6VF5i9BgfgHy17YADbDgNa0S6ECzUByCYPwnRInR9NwuvRjHU46SctnYj
+#     TDtt632nhJz2GxOgT8qCm2NMK0bJlUfQ5SYDTHNhif22IkPeB5sotRGJWMa7LSAB
+#     QXQmpdZL2CbeQeRTebV4vKuZZxnHQalRShtv72C0ODr4KVXYJYNZ53LbLKhaQXBC
+#     CY9TewDOfVVqflDFp+Vz5QxdDbggnb3vp0mLIxkDNNe9nOWQ4Y7UgTR3Y6fc2W9t
+#     eVsJ9EmBNyuG+3NaqDmlh4GEYbVRiSriAYRg8h3W4Qt3wXN7t7gTdfTCRK+nIIw6
+#     LUj3tqe5QWYoEGa6UiSddfIkPD7mA4e4ecioRJuP2YUHjd+Hyu+vw+3MSC6N92QP
+#     IaJAcZd7Bm41MdIOp6wcKMIX3DYE96qTfnlWVdcuONz2V1wtkDwoF+QSQawSqB8Q
+#     499da+F0Gh5AQOjXk6IolZGJn/wRjkaaNs16gBx5pkyyg1cprQ3B5AFio4epyrl8
+#     jHfgaMRVkVsYfXUmrIDBM2TXUWglx+S5WeLMbIIWtUkgYb0Ts5lBCMC0BMnUemcW
+#     voVLkffIzvT6+j0WbLxBoIWTnS1Vl+w84Spgi1gqvIzUIE38BHfAPsOiwMX4oW9X
+#     P4676IGcGr3+r4MC/Pc/yHCRBAiuxkGUxBQEdrjJPGfxV8IMtdXKsc/hGnKX+7EQ
+#     nUAb4FIo5tXV0XPZp/tyfMnTSFk1
+# ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-shardX-service
+  labels:
+    name: mongod-shardX
+spec:
+  publishNotReadyAddresses: true
+  ports:
+  - port: 27017
+    targetPort: 27017
+  clusterIP: None
+  selector:
+    name: mongod-shardX
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongod-shardX
+  labels:
+    name: mongod-shardX
+spec:
+  serviceName: mongodb-shardX-service
+  selector:
+    matchLabels:
+      name: mongod-shardX
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        name: mongod-shardX
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: replicaset
+                  operator: In
+                  values:
+                  - ShardXRepSet
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 10
+      volumes:
+        - name: secrets-volume
+          secret:
+            secretName: shared-bootstrap-data
+            defaultMode: 256
+        - name: helpers
+          configMap:
+            name: mongodb-helpers
+            defaultMode: 0744
+      containers:
+        - name: mongod-container
+          image: spakmaro/mongo
+          # command: ["/bin/sh"]
+          # args: ["-c", "/helpers/entrypoint.sh"]
+          command:
+            - "numactl"
+            - "--interleave=all"
+            - "mongod"
+            - "--wiredTigerCacheSizeGB"
+            - "0.25"
+            - "--bind_ip"
+            - "0.0.0.0"
+            - "--port"
+            - "27017"
+            - "--shardsvr"
+            - "--replSet"
+            - $(REPSET_NAME)
+            - "--auth"
+            - "--clusterAuthMode"
+            - "keyFile"
+            - "--keyFile"
+            - "/etc/secrets-volume/internal-auth-mongodb-keyfile"
+            - "--setParameter"
+            - "authenticationMechanisms=SCRAM-SHA-1"
+          # resources:
+          #   requests:
+          #     cpu: 1
+          #     memory: 2Gi
+          env:
+            - name: ROLE
+              value: "shard"
+            - name: ADMIN_USERNAME
+              value: "ADMIN_USERNAME_PLACEHOLDER"
+            - name: ADMIN_PASSWORD
+              value: "ADMIN_PASSWORD_PLACEHOLDER"
+            - name: REPSET_NAME
+              value: "ShardXRepSet"
+            - name: K8S_SERVICE_URL
+              value: "mongodb-shardX-service.default.svc.cluster.local"
+            - name: K8S_MONGOS_SERVICE_URL
+              value: "mongos.default.svc.cluster.local"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - containerPort: 27017
+          readinessProbe:
+            exec:
+              command: ["mongo", "--eval", "db.getMongo();"]
+          lifecycle:
+            postStart:
+              exec:
+                command: 
+                - /bin/sh
+                - -c
+                - /helpers/post-start.sh
+            preStop:
+              exec:
+                command: 
+                - /bin/sh
+                - -c
+                - /helpers/pre-stop.sh
+          volumeMounts:
+            - name: secrets-volume
+              readOnly: true
+              mountPath: /etc/secrets-volume
+            - name: mongodb-persistent-storage-claim
+              mountPath: /data/db
+            #- name: helpers
+            #  mountPath: /helpers
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-persistent-storage-claim
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 2Gi

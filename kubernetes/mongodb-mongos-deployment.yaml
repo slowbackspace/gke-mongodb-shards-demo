@@ -1,28 +1,17 @@
-apiVersion: v1
-kind: Service
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: mongos-router-service
-  labels:
-    name: mongos-router
+  name: mongos
 spec:
-  ports:
-  - port: 27017
-    targetPort: 27017
-  clusterIP: None
+  replicas: 1
   selector:
-    role: mongos-router
----
-apiVersion: apps/v1beta1
-kind: StatefulSet
-metadata:
-  name: mongos-router
-spec:
-  serviceName: mongos-router-service
-  replicas: 2
+    matchLabels:
+      name: mongos
   template:
     metadata:
       labels:
-        role: mongos-router
+        name: mongos
+        role: mongos
         tier: routers
         replicaset: routers
     spec:
@@ -46,15 +35,15 @@ spec:
             defaultMode: 256
       containers:
         - name: mongos-container
-          image: mongo
+          image: spakmaro/mongo
           command:
             - "numactl"
             - "--interleave=all"
             - "mongos"
-            - "--port"
-            - "27017"
             - "--bind_ip"
             - "0.0.0.0"
+            - "--port"
+            - "27017"
             - "--configdb"
             - "ConfigDBRepSet/mongod-configdb-0.mongodb-configdb-service.default.svc.cluster.local:27017,mongod-configdb-1.mongodb-configdb-service.default.svc.cluster.local:27017,mongod-configdb-2.mongodb-configdb-service.default.svc.cluster.local:27017"
             - "--clusterAuthMode"
@@ -63,14 +52,42 @@ spec:
             - "/etc/secrets-volume/internal-auth-mongodb-keyfile"
             - "--setParameter"
             - "authenticationMechanisms=SCRAM-SHA-1"
-          resources:
-            requests:
-              cpu: 0.25
-              memory: 512Mi
+          # resources:
+          #   requests:
+          #     cpu: 0.25
+          #     memory: 512Mi
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
           ports:
             - containerPort: 27017
           volumeMounts:
             - name: secrets-volume
               readOnly: true
               mountPath: /etc/secrets-volume
-
+---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: mongos-service
+# spec:
+#   ports:
+#   - port: 27017
+#     targetPort: 27017
+#   clusterIP: None
+#   selector:
+#     role: mongos
+# ---
+kind: Service
+apiVersion: v1
+metadata:
+  name: mongos
+spec:
+  selector:
+    role: mongos
+  ports:
+  - protocol: TCP
+    port: 27017
+  clusterIP: None

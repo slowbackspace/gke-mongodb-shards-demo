@@ -12,16 +12,20 @@ spec:
   selector:
     role: mongo-configdb
 ---
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mongod-configdb
 spec:
   serviceName: mongodb-configdb-service
   replicas: 3
+  selector:
+    matchLabels:
+      name: mongod-configdb
   template:
     metadata:
       labels:
+        name: mongod-configdb
         role: mongo-configdb
         tier: configdb
         replicaset: ConfigDBRepSet
@@ -46,20 +50,20 @@ spec:
             defaultMode: 256
       containers:
         - name: mongod-configdb-container
-          image: mongo
+          image: spakmaro/mongo
           command:
             - "numactl"
             - "--interleave=all"
             - "mongod"
+            - "--bind_ip"
+            - "0.0.0.0"
             - "--port"
             - "27017"
             - "--wiredTigerCacheSizeGB"
             - "0.25"
-            - "--bind_ip"
-            - "0.0.0.0"
             - "--configsvr"
             - "--replSet"
-            - "ConfigDBRepSet"
+            - "$(REPSET_NAME)"
             - "--auth"
             - "--clusterAuthMode"
             - "keyFile"
@@ -67,10 +71,38 @@ spec:
             - "/etc/secrets-volume/internal-auth-mongodb-keyfile"
             - "--setParameter"
             - "authenticationMechanisms=SCRAM-SHA-1"
-          resources:
-            requests:
-              cpu: 0.25
-              memory: 512Mi
+          # resources:
+          #   requests:
+          #     cpu: 0.25
+          #     memory: 512Mi
+          lifecycle:
+            postStart:
+              exec:
+                command: 
+                - /bin/sh
+                - -c
+                - /helpers/post-start.sh
+            preStop:
+              exec:
+                command: 
+                - /bin/sh
+                - -c
+                - /helpers/pre-stop.sh
+          env:
+            - name: ROLE
+              value: "configdb"
+            - name: ADMIN_USERNAME
+              value: "ADMIN_USERNAME_PLACEHOLDER"
+            - name: ADMIN_PASSWORD
+              value: "ADMIN_PASSWORD_PLACEHOLDER"
+            - name: REPSET_NAME
+              value: "ConfigDBRepSet"
+            - name: K8S_SERVICE_URL
+              value: "mongodb-configdb-service.default.svc.cluster.local"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - containerPort: 27017
           volumeMounts:
@@ -82,10 +114,8 @@ spec:
   volumeClaimTemplates:
   - metadata:
       name: mongo-configdb-persistent-storage-claim
-      annotations:
-        volume.beta.kubernetes.io/storage-class: "fast"
     spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 4Gi
+          storage: 1Gi
